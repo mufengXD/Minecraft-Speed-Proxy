@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #ifndef PROXY_H
 #define PROXY_H
 #include "json/CJsonObject.h"
@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <shared_mutex>
+#include "asio/import_asio.h"
 
 class ProxyException : public std::exception {
 private: 
@@ -25,22 +26,22 @@ struct User {
 	std::string ip;
 	std::atomic_uint64_t upload_bytes = 0;
 	std::time_t connect_time;
-	RbsLib::Network::TCP::TCPConnection client, server;
-	User(const RbsLib::Network::TCP::TCPConnection& client, const RbsLib::Network::TCP::TCPConnection& server);
+	asio::ip::tcp::socket* client, *server;
+	User(asio::ip::tcp::socket* client, asio::ip::tcp::socket* server);
 };
 
-/*ÃèÊöÓÃ»§ĞÅÏ¢£¬²»°üÀ¨Á¬½ÓĞÅÏ¢µÈ£¬ÓÃÓÚ·µ»Ø*/
+/*æè¿°ç”¨æˆ·ä¿¡æ¯ï¼Œä¸åŒ…æ‹¬è¿æ¥ä¿¡æ¯ç­‰ï¼Œç”¨äºè¿”å›*/
 struct UserInfo {
     /**
-     * @brief ÓÃ»§ĞÅÏ¢½á¹¹Ìå
+     * @brief ç”¨æˆ·ä¿¡æ¯ç»“æ„ä½“
      * 
-     * ÓÃÓÚÃèÊöÓÃ»§µÄ»ù±¾ĞÅÏ¢£¬°üÀ¨ÓÃ»§Ãû¡¢UUID¡¢IPµØÖ·¡¢ÉÏ´«×Ö½ÚÊıºÍÁ¬½ÓÊ±¼ä¡£
+     * ç”¨äºæè¿°ç”¨æˆ·çš„åŸºæœ¬ä¿¡æ¯ï¼ŒåŒ…æ‹¬ç”¨æˆ·åã€UUIDã€IPåœ°å€ã€ä¸Šä¼ å­—èŠ‚æ•°å’Œè¿æ¥æ—¶é—´ã€‚
      */
-    std::string username; /**< ÓÃ»§Ãû */
+    std::string username; /**< ç”¨æˆ·å */
     std::string uuid; /**< UUID */
-    std::string ip; /**< IPµØÖ· */
-    std::uint64_t upload_bytes; /**< ÉÏ´«¼°ÏÂÔØ×Ö½ÚÊı */
-    std::time_t connect_time; /**< Á¬½ÓÊ±¼ä */
+    std::string ip; /**< IPåœ°å€ */
+    std::uint64_t upload_bytes; /**< ä¸Šä¼ åŠä¸‹è½½å­—èŠ‚æ•° */
+    std::time_t connect_time; /**< è¿æ¥æ—¶é—´ */
 };
 
 struct Motd {
@@ -54,33 +55,49 @@ struct Motd {
 	static auto LoadMotdFromFile(const std::string& path) -> std::string;
 };
 
-class Proxy {
-
+/*åˆ©ç”¨asioåº“å®ç°çš„å¼‚æ­¥é«˜æ€§èƒ½ä»£ç†*/
+class Proxy 
+{
 public:
-
-	class CallbackException : public std::exception {
-		//¶¨ÒåÓÃÓÚÔÚ»Øµ÷ÖĞÅ×³öµÄÒì³££¬¸ÃÒì³£ÓÃÓÚÖ¸Ê¾»Øµ÷º¯Êı·µ»Ø×´Ì¬
-	protected:
-		std::string message;
+	class ConnectionControl
+	{
 	public:
-		CallbackException(const std::string& message) noexcept;
-		const char* what() const noexcept override;
+		ConnectionControl(asio::ip::tcp::socket& connection);
+		const std::string& Username(void) const noexcept;
+		const std::string& UUID(void) const noexcept;
+		std::string GetAddress(void) const noexcept;
+		std::string GetPort(void) const noexcept;
+		bool isEnableConnect = true;
+		std::string reason;
+		std::size_t UploadBytes(void) const noexcept;
+		std::time_t ConnectTime(void) const noexcept;
+		friend class Proxy;
+	private:
+		std::string username;
+		std::string uuid;
+		asio::ip::tcp::socket& socket;
+		std::size_t upload_bytes = 0;
+		std::time_t connect_time;
 	};
 
-	//ÒÔÏÂÎª»Øµ÷º¯Êı£¬¾ù²»±£Ö¤Ïß³Ì°²È«£¬ĞèÒª×¢ÒâÏß³Ì°²È«ÎÊÌâ
-	RbsLib::Function::Function<void(const RbsLib::Network::TCP::TCPConnection& client)> on_connected;//·¢ÉúÔÚÁ¬½Ó³É¹¦²¢½«Á¬½Ó¼ÓÈëÁ¬½Ó³Øºó,Å×³öÈÎºÎÒì³£½«µ¼ÖÂÁ¬½Ó¹Ø±Õ
-	RbsLib::Function::Function<void(const RbsLib::Network::TCP::TCPConnection& client)> on_disconnect;//·¢ÉúÔÚ¼´½«Óë¿Í»§¶Ë¶Ï¿ªÁ¬½ÓÇ°£¬´ËÊ±Á¬½ÓÒÑ²»¿ÉÓÃ£¬²»ÔÊĞíÔÚÁ¬½ÓÉÏÊÕ·¢Êı¾İ£¬½öÓÃÓÚ±êÊ¶Á¬½Ó¡£ÔÚÁ¬½ÓÉÏÊÕ·¢½«µ¼ÖÂÒì³£¡£Å×³öÒì³£ÎŞĞ§
-	RbsLib::Function::Function<void(const RbsLib::Network::TCP::TCPConnection& client, const std::string& username, const std::string& uuid)> on_login;//·¢ÉúÔÚÊÕµ½¿Í»§¶ËµÄµÇÂ¼Êı¾İ°üºó£¬ÓÃ»§Î´¼ÓÈëÔÚÏßÓÃ»§ÁĞ±í£¬loginÅ×³öµÄÒì³£½«»áÏÔÊ¾ÔÚ¿Í»§¶Ë
-	RbsLib::Function::Function<void(const RbsLib::Network::TCP::TCPConnection& client, const UserInfo& userinfo)> on_logout;//·¢ÉúÔÚÓÃ»§¼´½«¶Ï¿ªÁ¬½ÓÖ®Ç°£¬ÓÃ»§ÒÑ´ÓÔÚÏßÓÃ»§ÁĞ±íÖĞÒÆ³ı²¢ÇÒÁ¬½ÓÎ´´ÓÁ¬½Ó³Ø¶Ï¿ª£¬logoutÒªÇóÓëdisconnectÒªÇóÒ»ÖÂ£¬ÇÒ±£Ö¤logoutÏÈÓÚdisconnect¡£logoutÅ×³öÒì³£½«µ¼ÖÂÎ´¶¨ÒåĞĞÎª
-	RbsLib::Function::Function<void(const std::exception& ex)> exception_handle;//ÓÃÓÚÊä³ö´íÎóÈÕÖ¾£¬error_message_callbackÅ×³öµÄÒì³£½«µ¼ÖÂÎ´¶¨ÒåĞĞÎª
+
+	//ä»¥ä¸‹ä¸ºå›è°ƒå‡½æ•°ï¼Œå‡ä¸ä¿è¯çº¿ç¨‹å®‰å…¨ï¼Œéœ€è¦æ³¨æ„çº¿ç¨‹å®‰å…¨é—®é¢˜
+	RbsLib::Function::Function<void(ConnectionControl&)> on_connected;//å‘ç”Ÿåœ¨è¿æ¥æˆåŠŸå¹¶å°†è¿æ¥åŠ å…¥è¿æ¥æ± å,æŠ›å‡ºä»»ä½•å¼‚å¸¸å°†å¯¼è‡´è¿æ¥å…³é—­
+	RbsLib::Function::Function<void(ConnectionControl&)> on_disconnect;//å‘ç”Ÿåœ¨å³å°†ä¸å®¢æˆ·ç«¯æ–­å¼€è¿æ¥å‰ï¼Œæ­¤æ—¶è¿æ¥å·²ä¸å¯ç”¨ï¼Œä¸å…è®¸åœ¨è¿æ¥ä¸Šæ”¶å‘æ•°æ®ï¼Œä»…ç”¨äºæ ‡è¯†è¿æ¥ã€‚åœ¨è¿æ¥ä¸Šæ”¶å‘å°†å¯¼è‡´å¼‚å¸¸ã€‚æŠ›å‡ºå¼‚å¸¸æ— æ•ˆ
+	RbsLib::Function::Function<void(ConnectionControl&)> on_login;//å‘ç”Ÿåœ¨æ”¶åˆ°å®¢æˆ·ç«¯çš„ç™»å½•æ•°æ®åŒ…åï¼Œç”¨æˆ·æœªåŠ å…¥åœ¨çº¿ç”¨æˆ·åˆ—è¡¨ï¼ŒloginæŠ›å‡ºçš„å¼‚å¸¸å°†ä¼šæ˜¾ç¤ºåœ¨å®¢æˆ·ç«¯
+	RbsLib::Function::Function<void(ConnectionControl&)> on_logout;//å‘ç”Ÿåœ¨ç”¨æˆ·å³å°†æ–­å¼€è¿æ¥ä¹‹å‰ï¼Œç”¨æˆ·å·²ä»åœ¨çº¿ç”¨æˆ·åˆ—è¡¨ä¸­ç§»é™¤å¹¶ä¸”è¿æ¥æœªä»è¿æ¥æ± æ–­å¼€ï¼Œlogoutè¦æ±‚ä¸disconnectè¦æ±‚ä¸€è‡´ï¼Œä¸”ä¿è¯logoutå…ˆäºdisconnectã€‚logoutæŠ›å‡ºå¼‚å¸¸å°†å¯¼è‡´æœªå®šä¹‰è¡Œä¸º
+	RbsLib::Function::Function<void(ConnectionControl&)> exception_handle;//ç”¨äºè¾“å‡ºé”™è¯¯æ—¥å¿—ï¼Œerror_message_callbackæŠ›å‡ºçš„å¼‚å¸¸å°†å¯¼è‡´æœªå®šä¹‰è¡Œä¸º
+	RbsLib::Function::Function<void(const char*)> log_output;//ç”¨äºè¾“å‡ºæ—¥å¿—ï¼Œlog_outputæŠ›å‡ºçš„å¼‚å¸¸å°†å¯¼è‡´æœªå®šä¹‰è¡Œä¸º
 
 	Proxy(const std::string& local_address, std::uint16_t local_port, const std::string& remote_server_addr, std::uint16_t);
 	Proxy(const Proxy&) = delete;
 	Proxy& operator=(const Proxy&) = delete;
 	void Start();
+	//ä»¥ä¸‹å‡½æ•°ç¦æ­¢åœ¨å›è°ƒå‡½æ•°ä¸­è°ƒç”¨
 	void KickByUsername(const std::string& username);
 	void KickByUUID(const std::string& uuid);
 	auto GetUsersInfo() -> std::list<UserInfo>;
+	auto GetUsersInfoAsync() -> asio::awaitable<std::list<UserInfo>>;
 	void SetMotd(const std::string& motd);
 	void SetMaxPlayer(int n);
 	int GetMaxPlayer(void);
@@ -88,20 +105,29 @@ public:
 	auto GetUserProxyMap() const -> std::map<std::string, std::pair<std::string, std::uint16_t>>;
 	void DeleteUserProxy(const std::string& username);
 	void ClearUserProxy();
-	auto GetDefaultProxy() -> std::pair<std::string, std::uint16_t>;//»ñÈ¡Ä¬ÈÏ´úÀíµØÖ·,first:address,second:port
-	auto PingTest()const->std::uint64_t;
+	auto GetDefaultProxy() -> std::pair<std::string, std::uint16_t>;//è·å–é»˜è®¤ä»£ç†åœ°å€,first:address,second:port
+	auto PingTest()const -> std::uint64_t;
+	std::time_t GetStartTime(void) const noexcept;
 	~Proxy() noexcept;
 protected:
-	int max_player = -1;
-	std::shared_mutex motd_mutex;
-	Motd motd;
-	std::list<RbsLib::Network::TCP::TCPConnection> connections;
-	std::map<std::string, std::shared_ptr<User>> users;
-	std::map<std::string, std::pair<std::string, std::uint16_t>> user_proxy_map;
-	RbsLib::Network::TCP::TCPServer local_server;
+	asio::awaitable<void> AcceptLoop(asio::ip::tcp::acceptor& acceptor);
+	asio::awaitable<void> HandleConnection(asio::ip::tcp::socket socket);
+	asio::awaitable<void> ForwardData(asio::ip::tcp::socket& client_socket, asio::ip::tcp::socket& server_socket, User& user_control) noexcept;
+	std::string local_address;
 	std::string remote_server_addr;
+	std::uint16_t local_port;
 	std::uint16_t remote_server_port;
-	mutable std::shared_mutex global_mutex;
-	RbsLib::Thread::TaskPool thread_pool = 11;
+	std::atomic_uint32_t max_player = -1;
+	std::map<std::string, std::shared_ptr<User>> users;
+	asio::io_context io_context;
+	asio::strand<asio::io_context::executor_type> strand;
+	std::vector<std::thread> io_threads;
+	std::unique_ptr<asio::ip::tcp::acceptor> acceptor;
+	Motd motd;
+	std::map<std::string, std::pair<std::string, std::uint16_t>> user_proxy_map;
+	std::list<asio::ip::tcp::socket*> connections;
+	std::time_t start_time;
 };
+
+
 #endif // !PROXY_H
